@@ -1,7 +1,22 @@
 // api/upscale.js
-const axios = require('axios');
+// Menggunakan 'fetch' bawaan Node.js (Tidak perlu install axios)
 
 export default async function handler(req, res) {
+  // 1. Setup Header CORS agar tidak error di browser
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
+
+  // Handle preflight request
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -11,48 +26,59 @@ export default async function handler(req, res) {
   const headers = {
     'User-Agent': 'Mozilla/5.0 (Linux; Android 10)',
     'Content-Type': 'application/json',
-    'origin': 'https://aienhancer.ai',
-    'referer': 'https://aienhancer.ai/ai-image-upscaler'
+    'Origin': 'https://aienhancer.ai',
+    'Referer': 'https://aienhancer.ai/ai-image-upscaler'
   };
 
   try {
-    // MODE 1: START TASK (Kirim Gambar)
+    // --- MODE 1: START TASK (Kirim Gambar) ---
     if (action === 'create') {
       if (!imageBase64) return res.status(400).json({ error: 'No image provided' });
 
-      // Format Base64
       const formattedImage = imageBase64.startsWith('data:') 
         ? imageBase64 
         : `data:image/jpeg;base64,${imageBase64}`;
 
-      const create = await axios.post('https://aienhancer.ai/api/v1/r/image-enhance/create', {
-        model: 3,
-        image: formattedImage,
-        settings: 'kRpBbpnRCD2nL2RxnnuoMo7MBc0zHndTDkWMl9aW+Gw='
-      }, { headers });
+      // Ganti axios dengan fetch
+      const response = await fetch('https://aienhancer.ai/api/v1/r/image-enhance/create', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+          model: 3,
+          image: formattedImage,
+          settings: 'kRpBbpnRCD2nL2RxnnuoMo7MBc0zHndTDkWMl9aW+Gw='
+        })
+      });
 
-      if(create.data && create.data.data && create.data.data.id) {
-          return res.status(200).json({ success: true, id: create.data.data.id });
+      if (!response.ok) {
+        throw new Error(`Gagal menghubungi AI Server: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      
+      if(data.data && data.data.id) {
+          return res.status(200).json({ success: true, id: data.data.id });
       } else {
-          throw new Error('Gagal mendapatkan Task ID dari AI Provider');
+          throw new Error('Gagal mendapatkan Task ID. Coba gambar lain.');
       }
     }
 
-    // MODE 2: CHECK STATUS (Cek Hasil)
+    // --- MODE 2: CHECK STATUS (Cek Hasil) ---
     else if (action === 'check') {
       if (!taskId) return res.status(400).json({ error: 'No Task ID provided' });
 
-      const result = await axios.post('https://aienhancer.ai/api/v1/r/image-enhance/result', {
-        task_id: taskId
-      }, { headers });
+      const response = await fetch('https://aienhancer.ai/api/v1/r/image-enhance/result', {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({ task_id: taskId })
+      });
 
-      const data = result.data.data;
+      const result = await response.json();
+      const data = result.data;
 
-      // Jika sudah ada output, kirim balik
       if (data && data.output) {
         return res.status(200).json({ status: 'done', output: data.output });
       } else {
-        // Jika belum, kirim status processing
         return res.status(200).json({ status: 'processing' });
       }
     }
@@ -62,8 +88,7 @@ export default async function handler(req, res) {
     }
 
   } catch (e) {
-    console.error("Backend Error:", e.message);
-    // Return JSON error agar frontend bisa membacanya
-    return res.status(500).json({ error: e.message || 'Server Error' });
+    console.error("Backend Error:", e);
+    return res.status(500).json({ error: e.message || 'Internal Server Error' });
   }
 }
